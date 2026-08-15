@@ -9,6 +9,7 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate deploy",
     "prisma:dev": "prisma migrate dev",
+    "catalog:seed": "node src/scripts/seed-catalog.js",
     "staff:provision": "node src/scripts/provision-staff.js",
     "test": "node --test"
   },

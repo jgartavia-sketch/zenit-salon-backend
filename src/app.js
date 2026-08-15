@@ -9,6 +9,7 @@ import referralRoutes from "./routes/referral.routes.js";
 import adminRoutes from "./routes/admin.routes.js";
 import staffRoutes from "./routes/staff.routes.js";
 import serviceRequestRoutes from "./routes/service-request.routes.js";
+import catalogRoutes from "./routes/catalog.routes.js";
 
 export const app = express();
 
@@ -32,6 +33,7 @@ app.get("/api/health", (_req, res) => res.json({ ok: true }));
 app.use("/api/auth", authRoutes);
 app.use("/api/referrals", referralRoutes);
 app.use("/api/service-requests", serviceRequestRoutes);
+app.use("/api/catalog", catalogRoutes);
 app.use("/api/staff", staffRoutes);
 app.use("/api/admin", adminRoutes);
 

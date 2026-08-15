@@ -29,6 +29,11 @@ enum ServiceRequestStatus {
   CANCELLED
 }
 
+enum SalonServiceMode {
+  QUOTE
+  RESERVE
+}
+
 model User {
   id                   String          @id @default(uuid())
   customerCode         String          @unique
@@ -110,4 +115,76 @@ model ServiceRequest {
   updatedAt     DateTime             @updatedAt
 
   @@index([status, createdAt])
+}
+
+model ProductCategory {
+  id          String    @id @default(uuid())
+  slug        String    @unique
+  name        String
+  description String?
+  sortOrder   Int       @default(0)
+  active      Boolean   @default(true)
+  products    Product[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([active, sortOrder])
+}
+
+model Product {
+  id          String          @id @default(uuid())
+  slug        String          @unique
+  sku         String?         @unique
+  name        String
+  brand       String
+  description String
+  price       Int
+  imageUrl    String
+  stock       Int?
+  available   Boolean         @default(true)
+  active      Boolean         @default(true)
+  sortOrder   Int             @default(0)
+  categoryId  String
+  category    ProductCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  @@index([categoryId, active, available, sortOrder])
+  @@index([brand])
+  @@index([name])
+}
+
+model ServiceCategory {
+  id          String         @id @default(uuid())
+  slug        String         @unique
+  name        String
+  eyebrow     String
+  description String
+  sortOrder   Int            @default(0)
+  active      Boolean        @default(true)
+  services    SalonService[]
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@index([active, sortOrder])
+}
+
+model SalonService {
+  id              String            @id @default(uuid())
+  slug            String            @unique
+  name            String
+  description     String?
+  mode            SalonServiceMode
+  price           Int?
+  durationMinutes Int?
+  note            String?
+  active          Boolean           @default(true)
+  sortOrder       Int               @default(0)
+  categoryId      String
+  category        ServiceCategory   @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@index([categoryId, active, sortOrder])
+  @@index([mode, active])
 }
