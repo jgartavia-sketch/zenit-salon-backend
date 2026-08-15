@@ -13,7 +13,7 @@ router.post("/", requireAuth, async (req, res, next) => {
     });
     if (active) return res.json({ code: active.code, expiry: active.expiresAt });
 
-    const code = `JAM-${crypto.randomUUID().replaceAll("-", "").slice(0, 8).toUpperCase()}`;
+    const code = `ZEN-${crypto.randomUUID().replaceAll("-", "").slice(0, 8).toUpperCase()}`;
     const expiry = new Date(Date.now() + config.referralExpiryHours * 60 * 60 * 1000);
     const created = await prisma.referralCode.create({
       data: { code, ownerId: req.user.id, expiresAt: expiry },
