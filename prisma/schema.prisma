@@ -1,0 +1,113 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  CUSTOMER
+  ADMIN
+}
+
+enum PointMovementType {
+  PURCHASE
+  REFERRAL
+  ADJUSTMENT
+  REDEMPTION
+  REVERSAL
+}
+
+enum ServiceRequestStatus {
+  PENDING
+  CONTACTED
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+model User {
+  id                   String          @id @default(uuid())
+  customerCode         String          @unique
+  name                 String
+  email                String          @unique
+  phone                String
+  passwordHash         String
+  role                 UserRole        @default(CUSTOMER)
+  purchasePoints       Int             @default(0)
+  referralPoints       Int             @default(0)
+  referralCount        Int             @default(0)
+  referredById         String?
+  referredBy           User?           @relation("UserReferrals", fields: [referredById], references: [id])
+  referredUsers        User[]          @relation("UserReferrals")
+  referralCodes        ReferralCode[]  @relation("CodeOwner")
+  redeemedReferralCode ReferralCode?   @relation("CodeRedeemer")
+  pointMovements       PointMovement[]
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+
+  @@index([createdAt])
+}
+
+model StaffAccount {
+  id             String          @id @default(uuid())
+  name           String
+  email          String          @unique
+  passwordHash   String
+  active         Boolean         @default(true)
+  pointMovements PointMovement[]
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  @@index([active])
+}
+
+model ReferralCode {
+  id         String   @id @default(uuid())
+  code       String   @unique
+  ownerId    String
+  owner      User     @relation("CodeOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  expiresAt  DateTime
+  usedAt     DateTime?
+  usedById   String?  @unique
+  usedBy     User?    @relation("CodeRedeemer", fields: [usedById], references: [id])
+  createdAt  DateTime @default(now())
+
+  @@index([ownerId, expiresAt])
+}
+
+model PointMovement {
+  id               String            @id @default(uuid())
+  userId           String
+  user             User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type             PointMovementType
+  points           Int
+  amountColones    Int?
+  description      String
+  referenceId      String?           @unique
+  invoiceNumber    String?           @unique
+  createdByStaffId String?
+  createdByStaff   StaffAccount?     @relation(fields: [createdByStaffId], references: [id], onDelete: SetNull)
+  createdAt        DateTime          @default(now())
+
+  @@index([userId, createdAt])
+  @@index([createdByStaffId, createdAt])
+}
+
+model ServiceRequest {
+  id            String               @id @default(uuid())
+  name          String
+  phone         String
+  service       String
+  details       String
+  preferredDate DateTime?
+  preferredTime String?
+  status        ServiceRequestStatus @default(PENDING)
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+
+  @@index([status, createdAt])
+}
