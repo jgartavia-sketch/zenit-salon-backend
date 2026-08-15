@@ -46,7 +46,7 @@ router.post("/register", async (req, res, next) => {
     const registration = await prisma.$transaction(async (tx) => {
       const created = await tx.user.create({
         data: {
-          customerCode: `JAM-${crypto.randomUUID().slice(0, 8).toUpperCase()}`,
+          customerCode: `ZEN-${crypto.randomUUID().slice(0, 8).toUpperCase()}`,
           name: input.name,
           email: input.email,
           phone: input.phone,
