@@ -97,8 +97,14 @@ function categoryResponse(category) {
 router.get("/customers", async (req, res, next) => {
   try {
     const q = String(req.query.q || "").trim();
-    const users = await prisma.user.findMany({
-      where: q
+    const page = Math.max(1, Number.parseInt(String(req.query.page || "1"), 10) || 1);
+    const pageSize = Math.min(
+      200,
+      Math.max(1, Number.parseInt(String(req.query.pageSize || "50"), 10) || 50),
+    );
+    const where = {
+      role: "CUSTOMER",
+      ...(q
         ? {
             OR: [
               { email: { contains: q, mode: "insensitive" } },
@@ -107,12 +113,127 @@ router.get("/customers", async (req, res, next) => {
               { customerCode: { contains: q, mode: "insensitive" } },
             ],
           }
-        : undefined,
-      orderBy: { createdAt: "desc" },
-      take: 50,
+        : {}),
+    };
+
+    const [users, total] = await prisma.$transaction([
+      prisma.user.findMany({
+        where,
+        orderBy: [{ createdAt: "desc" }, { name: "asc" }],
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+      prisma.user.count({ where }),
+    ]);
+
+    res.json({
+      customers: users.map(publicUser),
+      pagination: {
+        page,
+        pageSize,
+        total,
+        totalPages: Math.max(1, Math.ceil(total / pageSize)),
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+const customerUpdateSchema = z
+  .object({
+    name: z.string().trim().min(2).max(120).optional(),
+    email: z.email().trim().toLowerCase().optional(),
+    phone: z.string().trim().min(7).max(30).optional(),
+    purchasePoints: z.coerce.number().int().min(0).optional(),
+    referralPoints: z.coerce.number().int().min(0).optional(),
+  })
+  .refine((input) => Object.keys(input).length > 0, {
+    message: "Debés enviar al menos un dato para actualizar.",
+  });
+
+router.patch("/customers/:id", async (req, res, next) => {
+  try {
+    const input = customerUpdateSchema.parse(req.body);
+    const current = await prisma.user.findFirst({
+      where: { id: req.params.id, role: "CUSTOMER" },
     });
 
-    res.json({ customers: users.map(publicUser) });
+    if (!current) {
+      return res.status(404).json({ error: "El cliente no existe." });
+    }
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const customer = await tx.user.update({
+        where: { id: current.id },
+        data: {
+          name: input.name,
+          email: input.email,
+          phone: input.phone,
+          purchasePoints: input.purchasePoints,
+          referralPoints: input.referralPoints,
+        },
+      });
+
+      const pointChanges = [
+        {
+          field: "purchasePoints",
+          previous: current.purchasePoints,
+          next: input.purchasePoints,
+          label: "puntos por compras",
+        },
+        {
+          field: "referralPoints",
+          previous: current.referralPoints,
+          next: input.referralPoints,
+          label: "puntos por referidos",
+        },
+      ].filter(({ next, previous }) => next !== undefined && next !== previous);
+
+      if (pointChanges.length) {
+        await tx.pointMovement.createMany({
+          data: pointChanges.map(({ previous, next, label }) => ({
+            userId: current.id,
+            type: "ADJUSTMENT",
+            points: next - previous,
+            description: `Edición administrativa de ${label}: ${previous} → ${next}`,
+          })),
+        });
+      }
+
+      return customer;
+    });
+
+    res.json({ ok: true, customer: publicUser(updated) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.delete("/customers/:id", async (req, res, next) => {
+  try {
+    const customer = await prisma.user.findFirst({
+      where: { id: req.params.id, role: "CUSTOMER" },
+      select: { id: true, name: true, email: true },
+    });
+
+    if (!customer) {
+      return res.status(404).json({ error: "El cliente no existe." });
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.user.updateMany({
+        where: { referredById: customer.id },
+        data: { referredById: null },
+      });
+      await tx.referralCode.updateMany({
+        where: { usedById: customer.id },
+        data: { usedById: null },
+      });
+      await tx.user.delete({ where: { id: customer.id } });
+    });
+
+    res.json({ ok: true, deletedCustomer: customer });
   } catch (error) {
     next(error);
   }
