@@ -166,6 +166,7 @@ router.get(
       select: { id: true, name: true, phone: true, email: true },
     });
     res.json({
+      posConnected:process.env.ZENIT_POS_CONNECTED==='true',
       orders: orders.map((x) => ({
         ...x,
         customer: users.find((u) => u.id === x.customerId),
@@ -181,6 +182,7 @@ router.patch(
       .object({ status: z.enum(["COMPLETED", "CANCELLED"]) })
       .strict()
       .parse(req.body);
+    if(status==='COMPLETED'&&process.env.ZENIT_POS_CONNECTED==='true')throw httpError(409,'Cobrá este pedido desde el POS conectado para mantener una sola venta y factura.');
     const order = await prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(724031)`;
       const old = await tx.shopOrder.findUnique({ where: { id } });

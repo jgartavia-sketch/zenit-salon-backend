@@ -272,3 +272,27 @@ model EmailDelivery {
   createdAt DateTime @default(now())
   @@index([sentAt, nextAttemptAt])
 }
+
+
+// Server-to-server operations: durable replay boundary, never browser credentials.
+model PosOperation {
+  key String @id
+  digest String
+  result Json
+  createdAt DateTime @default(now())
+}
+
+model PosSale {
+  key String @id
+  shopOrderId String? @unique
+  customerId String?
+  invoiceNumber String @unique
+  totalCents BigInt
+  status String
+  items Json
+  pointsMovementId String?
+  ownsPoints Boolean @default(false)
+  pointsActive Boolean @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

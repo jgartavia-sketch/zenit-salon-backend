@@ -561,14 +561,10 @@ const manual = z
     requestKey: z.uuid(),
   })
   .strict();
-router.post(
-  "/manual",
-  wrap(async (req, res) => {
-    const input = manual.parse(req.body);
+export async function createManual(input, actorId) {
+    input = manual.parse(input);
     const start = instant(input.date, input.time),
       end = new Date(+start + input.durationMinutes * 60000);
-    if (start < new Date() || crDate(start) !== crDate(new Date(+end - 1)))
-      throw httpError(400, "La cita debe ser futura y terminar el mismo día.");
     const hash = digest(input);
     const appointment = await prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(724030)`;
@@ -580,6 +576,8 @@ router.post(
           throw httpError(409, "Solicitud repetida con otros datos.");
         return old;
       }
+    if (start < new Date() || crDate(start) !== crDate(new Date(+end - 1)))
+      throw httpError(400, "La cita debe ser futura y terminar el mismo día.");
       const busy = await busyFor(tx, input.date);
       if (busy.some((x) => overlaps(start, end, x.startAt, x.endAt)))
         throw httpError(409, "Ese horario se cruza con otra cita o bloqueo.");
@@ -641,21 +639,25 @@ router.post(
       });
       await tx.auditEvent.create({
         data: {
-          actorId: req.user.id,
+          actorId: actorId,
           action: input.blocked ? "AGENDA_BLOCK" : "AGENDA_MANUAL",
           targetId: created.id,
         },
       });
       return created;
     });
+    return appointment;
+}
+router.post(
+  "/manual",
+  wrap(async (req, res) => {
+    const appointment = await createManual(req.body, req.user.id);
     res.status(201).json({ appointment });
   }),
 );
-router.patch(
-  "/appointments/:id",
-  wrap(async (req, res) => {
-    const id = z.uuid().parse(req.params.id);
-    const input = z
+export async function updateAppointment(id, input, actorId, operationKey=null) {
+    id = z.uuid().parse(id);
+    input = z
       .object({
         status: z.enum(["CONFIRMED", "COMPLETED", "CANCELLED"]).optional(),
         date: dateSchema.optional(),
@@ -670,9 +672,14 @@ router.patch(
         (x) => x.status || (x.date && x.time),
         "Elegí un estado o una nueva fecha y hora.",
       )
-      .parse(req.body);
+      .parse(input);
     const appointment = await prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(724030)`;
+      const requestHash=digest({id,input,actorId});
+      if(operationKey){
+        const previous=await tx.posOperation.findUnique({where:{key:operationKey}});
+        if(previous){if(previous.digest!==requestHash)throw httpError(409,'Operación repetida con otros datos.');return previous.result.appointment;}
+      }
       const old = await tx.appointment.findUnique({ where: { id } });
       if (!old) throw httpError(404, "Cita no encontrada.");
       if (
@@ -793,7 +800,7 @@ router.patch(
         },
       });
       await tx.auditEvent.create({
-        data: { actorId: req.user.id, action: "AGENDA_UPDATE", targetId: id },
+        data: { actorId: actorId, action: "AGENDA_UPDATE", targetId: id },
       });
       if (
         ["CONFIRMED", "CANCELLED"].includes(input.status) ||
@@ -806,8 +813,15 @@ router.patch(
           input.status || "RESCHEDULED",
           updated.updatedAt.toISOString(),
         );
+      if(operationKey)await tx.posOperation.create({data:{key:operationKey,digest:requestHash,result:{appointment:JSON.parse(JSON.stringify(updated))}}});
       return updated;
     });
+    return appointment;
+}
+router.patch(
+  "/appointments/:id",
+  wrap(async (req, res) => {
+    const appointment = await updateAppointment(req.params.id, req.body, req.user.id);
     res.json({ appointment });
   }),
 );
