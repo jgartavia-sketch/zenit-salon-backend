@@ -718,6 +718,68 @@ test(
           assert.ok(!JSON.stringify(r.body).includes("prisma"));
         },
       );
+      await t.test("reservas: correo durable, respuesta, propuesta e idempotencia",async(t)=>{
+        const {deliverBookingMail}=await import('../src/lib/booking-mail.js');
+        await prisma.emailDelivery.deleteMany();
+        const who=await prisma.user.create({data:{name:'Cliente <script> QA',email:`booking-${suffix}@example.com`,phone:'88888888',customerCode:randomUUID(),passwordHash:hash}});
+        const login=await call('/api/auth/login','POST',{email:who.email,password});const token=login.body.token;
+        const day=new Date(Date.now()+4*86400000-6*3600000).toISOString().slice(0,10);
+        await call('/api/agenda/settings','PUT',{...settings,weekly:Array.from({length:7},(_,day)=>({day,ranges:[{start:'09:00',end:'17:00'}]}))},ot);
+        let booking;
+        await t.test('servicio sin duración devuelve explicación visible sin 409 en lectura',async()=>{
+          const missing=await prisma.salonService.create({data:{name:'Sin duración',slug:`missing-${suffix}`,mode:'RESERVE',price:5000,categoryId:cat.id}});
+          const r=await call(`/api/agenda/availability?date=${day}&services=${missing.slug}`);
+          assert.equal(r.status,200);assert.deepEqual(r.body.slots,[]);assert.match(r.body.bookingUnavailableReason,/duración/);
+          const cal=await call(`/api/agenda/calendar?month=${day.slice(0,7)}&services=${missing.slug}`);assert.equal(cal.status,200);assert.match(cal.body.bookingUnavailableReason,/duración/);
+        });
+        const key=randomUUID();
+        await t.test('reserva y dos correos se guardan juntos; repetir POST no duplica',async()=>{
+          const body={date:day,time:'09:00',services:[service.slug],requestKey:key};
+          const first=await call('/api/agenda/appointments','POST',body,token);assert.equal(first.status,201);booking=first.body.appointment;
+          const second=await call('/api/agenda/appointments','POST',body,token);assert.equal(second.body.appointment.id,booking.id);
+          assert.equal(await prisma.emailDelivery.count({where:{eventKey:{startsWith:booking.id}}}),2);
+          const ownerMail=await prisma.emailDelivery.findFirst({where:{eventKey:{startsWith:booking.id},recipient:owner.email}});assert.match(ownerMail.text,/\/admin\?/);assert.ok(ownerMail.html.includes('&lt;script&gt;'));assert.ok(!ownerMail.html.includes('<script>'));
+        });
+        await t.test('confirmación solo admin, notifica una vez y GET no cambia estados',async()=>{
+          assert.equal((await call(`/api/agenda/appointments/${booking.id}`,'PATCH',{status:'CONFIRMED'},token)).status,403);
+          assert.equal((await call(`/api/agenda/appointments/${booking.id}`)).status,401);
+          assert.equal((await prisma.appointment.findUnique({where:{id:booking.id}})).status,'PENDING');
+          assert.equal((await call(`/api/agenda/appointments/${booking.id}`,'PATCH',{status:'CONFIRMED'},ot)).status,200);
+          await call(`/api/agenda/appointments/${booking.id}`,'PATCH',{status:'CONFIRMED'},ot);
+          assert.equal(await prisma.emailDelivery.count({where:{eventKey:{startsWith:booking.id+':CONFIRMED'}}}),1);
+        });
+        await t.test('rechazo requiere motivo, valida propuesta y oculta detalles al público',async()=>{
+          assert.equal((await call(`/api/agenda/appointments/${booking.id}`,'PATCH',{status:'CANCELLED'},ot)).status,400);
+          assert.equal((await call(`/api/agenda/appointments/${booking.id}`,'PATCH',{status:'CANCELLED',responseMessage:'No es posible',proposedDate:day},ot)).status,400);
+          const r=await call(`/api/agenda/appointments/${booking.id}`,'PATCH',{status:'CANCELLED',responseMessage:'Tenemos un imprevisto. ¿Te sirve más tarde?',proposedDate:day,proposedTime:'11:00'},ot);assert.equal(r.status,200);assert.equal(r.body.appointment.status,'CANCELLED');
+          const mail=await prisma.emailDelivery.findFirst({where:{eventKey:{startsWith:booking.id+':CANCELLED'}}});assert.match(mail.text,/imprevisto/);assert.match(mail.text,/Propuesta:/);
+          const pub=await call(`/api/agenda/calendar?month=${day.slice(0,7)}`);assert.ok(!JSON.stringify(pub.body).includes('imprevisto'));assert.ok(!JSON.stringify(pub.body).includes(who.name));
+        });
+        await t.test('aceptar propuesta exige titular; doble clic crea solo una nueva solicitud',async()=>{
+          assert.equal((await call(`/api/agenda/appointments/${booking.id}/accept-proposal`,'POST',undefined,at)).status,404);
+          const r=await Promise.all([call(`/api/agenda/appointments/${booking.id}/accept-proposal`,'POST',undefined,token),call(`/api/agenda/appointments/${booking.id}/accept-proposal`,'POST',undefined,token)]);assert.equal(r[0].status,201);assert.equal(r[1].status,201);assert.equal(r[0].body.appointment.id,r[1].body.appointment.id);assert.equal(r[0].body.appointment.status,'PENDING');
+        });
+        await t.test('propuesta ocupada después de ofrecerla se rechaza al aceptar',async()=>{
+          const r=await call('/api/agenda/appointments','POST',{date:day,time:'12:00',services:[service.slug],requestKey:randomUUID()},token);assert.equal(r.status,201);const id=r.body.appointment.id;
+          assert.equal((await call(`/api/agenda/appointments/${id}`,'PATCH',{status:'CANCELLED',responseMessage:'Cambio de horario',proposedDate:day,proposedTime:'13:00'},ot)).status,200);
+          assert.equal((await call('/api/agenda/manual','POST',{date:day,time:'13:00',durationMinutes:60,customerName:'Bloqueo de prueba',blocked:true,requestKey:randomUUID()},ot)).status,201);
+          assert.equal((await call(`/api/agenda/appointments/${id}/accept-proposal`,'POST',undefined,token)).status,409);
+          assert.equal((await prisma.appointment.findUnique({where:{id}})).proposalAppointmentId,null);
+        });
+        await t.test('si no se puede guardar la notificación, la reserva tampoco se guarda',async()=>{
+          const {config}=await import('../src/config.js');const previous=config.bookingOwnerEmail;config.bookingOwnerEmail='invalid';const key=randomUUID();
+          try{const r=await call('/api/agenda/appointments','POST',{date:day,time:'16:00',services:[service.slug],requestKey:key},token);assert.equal(r.status,500);assert.equal(await prisma.appointment.count({where:{requestKey:key}}),0);}finally{config.bookingOwnerEmail=previous;}
+        });
+        await t.test('SMTP fallido no pierde reserva; reintento envía y no reenvía los enviados',async()=>{
+          let calls=0;await deliverBookingMail({send:async()=>{calls++;throw Object.assign(Error('offline'),{code:'ECONNREFUSED'});}});assert.ok(calls>0);assert.ok(await prisma.emailDelivery.count({where:{lastError:'ECONNREFUSED',sentAt:null}})>0);
+          const messages=[];await deliverBookingMail({now:new Date(Date.now()+3600001),send:async(m)=>{messages.push(m);}});assert.equal(await prisma.emailDelivery.count({where:{sentAt:null}}),0);assert.ok(messages.length>0);assert.match(messages[0].messageId,/^<zenit-/);
+          await deliverBookingMail({now:new Date(Date.now()+3600001),send:async()=>assert.fail('No debe reenviar')});
+        });
+        await t.test('solo admin ve el estado de notificaciones',async()=>{
+          assert.equal((await call('/api/agenda/notifications','GET',undefined,token)).status,403);
+          const r=await call('/api/agenda/notifications','GET',undefined,ot);assert.equal(r.status,200);assert.deepEqual(r.body,{pending:0,failed:0});
+        });
+      });
       await t.test(
         "logout revoca token y desactivar revoca acceso",
         async () => {

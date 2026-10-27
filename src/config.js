@@ -22,6 +22,11 @@ export const config = {
     .map((url) => url.trim())
     .filter(Boolean),
 
+  resendApiKey: String(process.env.RESEND_API_KEY || "").trim(),
+  bookingEmailFrom: String(process.env.BOOKING_EMAIL_FROM || process.env.EMAIL_FROM || "").trim(),
+  bookingOwnerEmail: String(process.env.BOOKING_OWNER_EMAIL || process.env.OWNER_EMAIL || "").trim().toLowerCase(),
+  bookingSiteUrl: String(process.env.BOOKING_SITE_URL || "https://zenitsalon.com").replace(/\/$/, ""),
+
   supportEmail: process.env.SUPPORT_EMAIL || "systemlabcr@gmail.com",
 
   emailHost: process.env.EMAIL_HOST || "smtp.gmail.com",

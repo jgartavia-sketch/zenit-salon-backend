@@ -1,0 +1,96 @@
+ZÉNIT SALÓN · RESERVAS Y RESPUESTAS POR CORREO
+Entrega incremental sobre el calendario premium ya publicado.
+
+Copiar los archivos completos de cada ZIP en la raíz de su repositorio,
+conservando carpetas y reemplazando los incluidos. No eliminar el resto.
+Primero backend CON MIGRACIÓN; después frontend. No aplicar ZIP anteriores.
+No cambia contraseñas ni requiere ejecutar owner:provision o catalog:seed.
+
+COMPORTAMIENTO
+1. La clienta elige servicio, día y una hora disponible e ingresa con su cuenta.
+2. Al guardar aparece un mensaje visible de solicitud enviada con éxito.
+3. La reserva y sus avisos se guardan juntos. Se aparta el cupo mientras la dueña
+   responde, sujeto al vencimiento configurado en la agenda.
+4. La clienta recibe acuse por correo y la dueña aviso de nueva reserva.
+5. Los botones del correo abren la cita concreta en /admin. La dueña debe ingresar
+   con su cuenta; abrir el enlace NO confirma ni cancela por sí solo.
+6. Puede confirmar, o rechazar escribiendo un motivo y ofreciendo opcionalmente
+   fecha/hora alternativas. El rechazo libera la cita original y notifica a la
+   clienta con el mensaje. La confirmación también genera correo para la clienta.
+7. La clienta ve la respuesta en Mis citas y puede aceptar la propuesta allí.
+   Se vuelve a validar el cupo y se crea una nueva solicitud PENDING para confirmar.
+   La propuesta sola no aparta espacio. El doble clic no crea citas duplicadas.
+8. Si falla el proveedor de correo, la reserva permanece guardada; hay reintentos
+   automáticos. El panel muestra conteos de notificaciones pendientes/con fallos.
+
+SOLUCIÓN DEL 409
+El código de disponibilidad rechazaba servicios sin duración. La nueva migración
+asigna 60 minutos iniciales SOLO a servicios RESERVE cuya duración estaba nula.
+No reemplaza tiempos ya configurados ni modifica servicios QUOTE. La dueña debe
+revisar las duraciones reales en Abrir horarios ANTES de recibir reservas reales.
+Los nuevos servicios sin duración muestran una explicación y no se pueden reservar
+incompletos. Una colisión real de horario sigue devolviendo 409 por seguridad.
+
+Las solicitudes de cotización por WhatsApp conservan su flujo de coordinación;
+no son reservas de agenda y no se incorporan automáticamente a estos avisos.
+No hay cambios en el POS, cuentas por cobrar, puntos, stock ni cuentas existentes.
+
+APLICACIÓN EN BACKEND / RENDER
+Base main: 556f7164536e226d8dd224a13f24c796944195c7
+
+1. Copiar archivos en zenit-salon-backend. Revisar git status y hacer commit/push.
+2. El despliegue necesita generar Prisma con el nuevo schema y aplicar la nueva
+   migración ANTES de iniciar esta versión de la API. Usar el comando Pre-Deploy
+   de Render si está disponible: npm run prisma:migrate
+   Conservar cualquier paso previo necesario que ya exista en ese comando.
+   Build compatible: npm ci --include=dev && npm run prisma:generate
+   Inicio: npm start
+   Si no se utiliza Pre-Deploy, ejecutar npm run prisma:migrate en la Shell con
+   el nuevo commit disponible y volver a desplegar. Habrá errores si el código
+   nuevo recibe reservas antes de que la migración esté aplicada.
+   NUNCA usar migrate reset, db push --accept-data-loss ni recrear la base.
+3. Configurar en Environment del BACKEND:
+   BOOKING_OWNER_EMAIL=eeacordero7@gmail.com
+   BOOKING_SITE_URL=https://zenitsalon.com
+
+   Elegir UNO de estos métodos para enviar notificaciones de agenda:
+   A) HTTPS con Resend:
+      RESEND_API_KEY=<clave privada del proveedor>
+      BOOKING_EMAIL_FROM=<nombre y dirección de un dominio verificado en Resend>
+      Ejemplo de formato solamente: Zénit Salón <citas@dominio-verificado.com>
+      No copiar una dirección ficticia ni usar Gmail como remitente Resend.
+      Si RESEND_API_KEY está presente se usa este método para las reservas.
+   B) SMTP existente, sin RESEND_API_KEY:
+      EMAIL_HOST, EMAIL_PORT, EMAIL_SECURE, EMAIL_USER, EMAIL_PASS, EMAIL_FROM.
+      Si ya funciona, conservar esos valores. BOOKING_EMAIL_FROM es opcional.
+      Los servicios gratuitos de Render bloquean SMTP en 25/465/587; en ese caso
+      usar HTTPS. No subir secretos a Git ni ponerlos en NEXT_PUBLIC_*.
+
+   El código NO modifica las variables de Render por medio del push.
+4. Esperar despliegue correcto y revisar duraciones y horarios en /admin.
+5. Aplicar frontend y probar una reserva real con un correo controlado por vos.
+   Confirmar recepción en ambos buzones (incluida carpeta Spam), abrir el enlace,
+   confirmar o rechazar con motivo y aceptar una propuesta como cliente.
+
+PRUEBAS REPRODUCIBLES
+npm ci --include=dev
+npm run prisma:generate
+npm test
+
+La suite de integración requiere TEST_DATABASE_URL apuntando a una PostgreSQL
+LOCAL DESECHABLE zenit_test con migraciones aplicadas. NO usar producción.
+
+OPERACIÓN DEL CORREO
+El proceso npm start inicia un envío cada 30 segundos, con pendientes persistidos
+tras reinicios. Si el servicio duerme, procesa la cola cuando se reanuda. Hay
+reintentos con espera creciente hasta una hora. No se elimina una reserva por
+fallar el correo. Una aceptación del proveedor no garantiza llegada a Inbox.
+SMTP no puede garantizar ausencia absoluta de duplicados si la conexión cae tras
+aceptar un correo; se mantiene Message-ID estable. Resend deduplica con la misma
+clave durante 24 horas. El estado real de rebotes debe consultarse en el proveedor.
+No se incluye una clave de Resend ni acceso a tu configuración SMTP.
+
+REFERENCIAS DE INFRAESTRUCTURA
+https://render.com/docs/free
+https://resend.com/docs/api-reference/emails/send-email
+https://resend.com/docs/dashboard/emails/idempotency-keys

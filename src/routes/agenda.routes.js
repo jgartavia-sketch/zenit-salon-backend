@@ -1,3 +1,4 @@
+import { queueBookingMail } from "../lib/booking-mail.js";
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
@@ -118,7 +119,14 @@ async function monthSnapshot(month, ids, owner = false) {
   const first = instant(dates[0], "00:00");
   const end = new Date(+instant(dates.at(-1), "00:00") + 86400000);
   const config = await settings();
-  const duration = ids.length ? (await servicesFor(prisma, ids)).duration : 15;
+  let duration = 15,
+    bookingUnavailableReason = "";
+  try {
+    if (ids.length) duration = (await servicesFor(prisma, ids)).duration;
+  } catch (e) {
+    if (e.status !== 409) throw e;
+    bookingUnavailableReason = e.message;
+  }
   // Only privileged callers may retrieve names, services, or appointment identifiers.
   const appointments = await prisma.appointment.findMany({
     where: { startAt: { lt: end }, endAt: { gt: first } },
@@ -142,7 +150,9 @@ async function monthSnapshot(month, ids, owner = false) {
       (x.status === "PENDING" && +x.expiresAt > +now),
   );
   const days = dates.map((date) => {
-    const slots = buildSlots(config, date, duration, live, now);
+    const slots = bookingUnavailableReason
+      ? []
+      : buildSlots(config, date, duration, live, now);
     const free = slots.filter((s) => s.available).length;
     const state =
       date < crDate(now)
@@ -160,6 +170,7 @@ async function monthSnapshot(month, ids, owner = false) {
     month,
     timeZone: "America/Costa_Rica",
     durationMinutes: duration,
+    bookingUnavailableReason,
     days,
     ...(owner
       ? {
@@ -199,9 +210,19 @@ router.get(
       instant(date, "00:00") > new Date(Date.now() + 90 * 86400000)
     )
       throw httpError(400, "Elegí una fecha dentro de los próximos 90 días.");
-    const duration = ids.length
-      ? (await servicesFor(prisma, ids)).duration
-      : 15;
+    let duration = 15;
+    try {
+      if (ids.length) duration = (await servicesFor(prisma, ids)).duration;
+    } catch (e) {
+      if (e.status !== 409) throw e;
+      return res.json({
+        date,
+        timeZone: "America/Costa_Rica",
+        durationMinutes: null,
+        slots: [],
+        bookingUnavailableReason: e.message,
+      });
+    }
     const config = await settings();
     res.json({
       date,
@@ -288,7 +309,7 @@ router.post(
           409,
           "Ese horario ya no está disponible. Elegí otro cupo.",
         );
-      return tx.appointment.create({
+      const created = await tx.appointment.create({
         data: {
           customerId: req.user.id,
           customerName: req.user.name,
@@ -302,8 +323,16 @@ router.post(
           expiresAt: new Date(Date.now() + config.holdHours * 3600000),
         },
       });
+      await queueBookingMail(tx, created, "REQUESTED", "created");
+      return created;
     });
-    res.status(201).json({ appointment });
+    res
+      .status(201)
+      .json({
+        appointment,
+        message:
+          "Solicitud enviada con éxito. El salón te responderá por correo.",
+      });
   }),
 );
 router.patch(
@@ -323,11 +352,115 @@ router.patch(
       });
       if (!result.count)
         throw httpError(409, "No se puede cancelar esta cita.");
+      await queueBookingMail(
+        tx,
+        await tx.appointment.findUnique({ where: { id } }),
+        "CUSTOMER_CANCELLED",
+        new Date().toISOString(),
+      );
     });
     res.json({ ok: true });
   }),
 );
+router.post(
+  "/appointments/:id/accept-proposal",
+  rateLimit("accept-proposal", 30, 60),
+  wrap(async (req, res) => {
+    const id = z.uuid().parse(req.params.id);
+    const appointment = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(724030)`;
+      const old = await tx.appointment.findFirst({
+        where: { id, customerId: req.user.id },
+      });
+      if (!old) throw httpError(404, "Cita no encontrada.");
+      if (old.proposalAppointmentId)
+        return tx.appointment.findUnique({
+          where: { id: old.proposalAppointmentId },
+        });
+      if (
+        old.status !== "CANCELLED" ||
+        !old.proposedStartAt ||
+        !old.proposedEndAt
+      )
+        throw httpError(409, "Esta cita no tiene propuesta disponible.");
+      const date = crDate(old.proposedStartAt);
+      if (date < crDate() || +old.proposedStartAt > Date.now() + 90 * 86400000)
+        throw httpError(
+          409,
+          "La propuesta ya no está vigente. Elegí otro horario.",
+        );
+      if (
+        (await tx.appointment.count({
+          where: {
+            customerId: req.user.id,
+            status: "PENDING",
+            expiresAt: { gt: new Date() },
+          },
+        })) >= 3
+      )
+        throw httpError(
+          409,
+          "Revisá tus solicitudes pendientes antes de aceptar otra.",
+        );
+      const cfg = await settings(tx),
+        duration = (+old.proposedEndAt - +old.proposedStartAt) / 60000;
+      const slot = buildSlots(
+        cfg,
+        date,
+        duration,
+        await busyFor(tx, date),
+      ).find(
+        (x) => +new Date(x.startAt) === +old.proposedStartAt && x.available,
+      );
+      if (!slot)
+        throw httpError(
+          409,
+          "La propuesta ya no tiene cupo. Elegí otro horario en Reservar.",
+        );
+      const created = await tx.appointment.create({
+        data: {
+          customerId: req.user.id,
+          customerName: req.user.name,
+          phone: req.user.phone,
+          startAt: old.proposedStartAt,
+          endAt: old.proposedEndAt,
+          services: old.services,
+          notes: old.notes,
+          requestKey: crypto.randomUUID(),
+          requestDigest: digest({ proposal: id, customerId: req.user.id }),
+          expiresAt: new Date(Date.now() + cfg.holdHours * 3600000),
+        },
+      });
+      await tx.appointment.update({
+        where: { id },
+        data: { proposalAppointmentId: created.id },
+      });
+      await tx.auditEvent.create({
+        data: {
+          actorId: req.user.id,
+          action: "AGENDA_ACCEPT_PROPOSAL",
+          targetId: created.id,
+        },
+      });
+      await queueBookingMail(tx, created, "REQUESTED", "created");
+      return created;
+    });
+    res.status(201).json({ appointment });
+  }),
+);
 router.use(requireAdminKey);
+router.get(
+  "/notifications",
+  wrap(async (_req, res) => {
+    const pending = await prisma.emailDelivery.count({
+      where: { sentAt: null },
+    });
+    const failed = await prisma.emailDelivery.count({
+      where: { sentAt: null, lastError: { not: null } },
+    });
+    res.json({ pending, failed });
+  }),
+);
 router.get(
   "/admin/calendar",
   wrap(async (req, res) => {
@@ -528,6 +661,9 @@ router.patch(
         date: dateSchema.optional(),
         time: time.optional(),
         durationMinutes: z.number().int().min(15).max(720).optional(),
+        responseMessage: z.string().trim().max(1000).optional(),
+        proposedDate: dateSchema.optional(),
+        proposedTime: time.optional(),
       })
       .strict()
       .refine(
@@ -539,6 +675,66 @@ router.patch(
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(724030)`;
       const old = await tx.appointment.findUnique({ where: { id } });
       if (!old) throw httpError(404, "Cita no encontrada.");
+      if (
+        input.status === old.status &&
+        !input.date &&
+        !input.time &&
+        !input.durationMinutes &&
+        !input.proposedDate &&
+        (!input.responseMessage ||
+          input.responseMessage === old.responseMessage)
+      )
+        return old;
+      if (
+        input.status === "CANCELLED" &&
+        old.customerId &&
+        !input.responseMessage?.trim()
+      )
+        throw httpError(400, "Escribí el motivo para la clienta.");
+      if (Boolean(input.proposedDate) !== Boolean(input.proposedTime))
+        throw httpError(400, "Completá fecha y hora de la propuesta.");
+      if (
+        (input.proposedDate || input.proposedTime) &&
+        input.status !== "CANCELLED"
+      )
+        throw httpError(
+          400,
+          "La propuesta acompaña el rechazo de la cita original.",
+        );
+      const proposedStartAt = input.proposedDate
+        ? instant(input.proposedDate, input.proposedTime)
+        : null;
+      const proposedEndAt = proposedStartAt
+        ? new Date(+proposedStartAt + (+old.endAt - +old.startAt))
+        : null;
+      if (proposedStartAt) {
+        if (
+          +proposedStartAt < Date.now() ||
+          +proposedStartAt > Date.now() + 90 * 86400000
+        )
+          throw httpError(
+            400,
+            "La propuesta debe estar dentro de los próximos 90 días.",
+          );
+        const cfg = await settings(tx);
+        const others = (await busyFor(tx, input.proposedDate)).filter(
+          (x) => !(+x.startAt === +old.startAt && +x.endAt === +old.endAt),
+        );
+        if (
+          !buildSlots(
+            cfg,
+            input.proposedDate,
+            (+old.endAt - +old.startAt) / 60000,
+            others,
+          ).some(
+            (x) => +new Date(x.startAt) === +proposedStartAt && x.available,
+          )
+        )
+          throw httpError(
+            409,
+            "La propuesta no cabe en los horarios abiertos o está ocupada.",
+          );
+      }
       const expired = old.status === "PENDING" && +old.expiresAt <= Date.now();
       const allowed = {
         PENDING: ["CONFIRMED", "CANCELLED"],
@@ -584,6 +780,12 @@ router.patch(
         data: {
           startAt: start,
           endAt: end,
+          ...(input.responseMessage !== undefined
+            ? { responseMessage: input.responseMessage }
+            : {}),
+          ...(input.status === "CANCELLED"
+            ? { proposedStartAt, proposedEndAt }
+            : {}),
           ...(input.status ? { status: input.status } : {}),
           ...(input.status === "CONFIRMED" || input.status === "CANCELLED"
             ? { expiresAt: null }
@@ -593,6 +795,17 @@ router.patch(
       await tx.auditEvent.create({
         data: { actorId: req.user.id, action: "AGENDA_UPDATE", targetId: id },
       });
+      if (
+        ["CONFIRMED", "CANCELLED"].includes(input.status) ||
+        input.date ||
+        input.time
+      )
+        await queueBookingMail(
+          tx,
+          updated,
+          input.status || "RESCHEDULED",
+          updated.updatedAt.toISOString(),
+        );
       return updated;
     });
     res.json({ appointment });

@@ -1,0 +1,23 @@
+VALIDACIÓN DE ESTA ENTREGA
+- Integración API: 29 pruebas aprobadas, 0 fallos.
+- Adaptador Resend HTTPS: 4 pruebas aprobadas, con proveedor simulado.
+- Sesión administrativa: 7 pruebas aprobadas.
+- Migración con datos previos: duración nula RESERVE pasa a 60; duración existente
+  de 90 se conserva; QUOTE nulo permanece sin cambios.
+- Build Next.js de producción: correcto. TypeScript incluido: sin errores.
+- ESLint: 0 errores; 22 advertencias existentes sobre img/next/image.
+- Chromium: reserva, error visible sin hora, éxito, enlace de correo a cita,
+  confirmación, rechazo con motivo/propuesta, aceptación por titular y nueva
+  solicitud comprobadas de extremo a extremo.
+- 48 combinaciones de vistas y anchos 320/390/768/1440 sin desborde horizontal,
+  incluyendo respuesta de la propietaria y propuesta de la clienta.
+- Privacidad pública, roles, titularidad, doble envío, propuesta ocupada tras
+  ofrecerla, cola durable, fallo de correo y reintento comprobados.
+- Correo: contenido capturado/simulado localmente, sin enviar a buzones reales.
+- Datos: Prisma con PGlite local desechable; sin tocar datos de producción.
+- Sin push, despliegue ni cambios en las variables de Render por parte del asistente.
+
+Pendiente en producción: aplicar migración, configurar proveedor/remitente,
+verificar duraciones reales y comprobar la llegada a ambos buzones. No se ha
+probado Safari ni cada modelo físico de teléfono. No se afirma una seguridad
+absoluta ni entrega universal a bandeja principal.

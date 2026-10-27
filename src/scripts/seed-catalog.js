@@ -267,6 +267,7 @@ async function seedServices() {
           active: true,
         },
         create: {
+          durationMinutes: mode === "RESERVE" ? 60 : null,
           slug,
           name,
           mode,

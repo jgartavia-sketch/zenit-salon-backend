@@ -224,6 +224,10 @@ model Appointment {
   notes String @default("")
   requestKey String @unique
   requestDigest String
+  responseMessage String @default("")
+  proposedStartAt DateTime?
+  proposedEndAt DateTime?
+  proposalAppointmentId String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   @@index([startAt, endAt])
@@ -251,4 +255,20 @@ model AuditEvent {
   targetId String?
   createdAt DateTime @default(now())
   @@index([createdAt])
+}
+
+model EmailDelivery {
+  id String @id @default(uuid())
+  eventKey String @unique
+  recipient String
+  subject String
+  text String
+  html String
+  attempts Int @default(0)
+  sentAt DateTime?
+  nextAttemptAt DateTime @default(now())
+  leaseUntil DateTime?
+  lastError String?
+  createdAt DateTime @default(now())
+  @@index([sentAt, nextAttemptAt])
 }

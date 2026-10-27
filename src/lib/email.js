@@ -182,3 +182,20 @@ export async function sendPointsAddedEmail(customer, award) {
   console.info(`Aviso de puntos enviado: ${info.messageId}`);
   return { sent: true };
 }
+// Shared SMTP transport; booking messages are persisted separately before delivery.
+export async function sendBookingMail(message, {fetchImpl=fetch}={}) {
+  if(config.resendApiKey){
+    if(!config.bookingEmailFrom)throw Object.assign(new Error("Falta remitente verificado"),{code:"BOOKING_FROM_MISSING"});
+    const r=await fetchImpl("https://api.resend.com/emails",{
+      method:"POST",signal:AbortSignal.timeout(15000),
+      headers:{Authorization:`Bearer ${config.resendApiKey}`,"Content-Type":"application/json","Idempotency-Key":message.messageId.replace(/[<>]/g,"")},
+      body:JSON.stringify({from:config.bookingEmailFrom,to:[message.to],subject:message.subject,text:message.text,html:message.html})
+    });
+    if(!r.ok)throw Object.assign(new Error("El proveedor no aceptó el correo"),{code:`RESEND_HTTP_${r.status}`});
+    const data=await r.json();
+    if(!data.id)throw Object.assign(new Error("Respuesta inválida del proveedor"),{code:"RESEND_INVALID_RESPONSE"});
+    return data;
+  }
+  if (!emailIsConfigured()) throw Object.assign(new Error("SMTP no configurado"), {code:"SMTP_NOT_CONFIGURED"});
+  return (await getTransporter()).sendMail({from:config.bookingEmailFrom || emailFrom(), ...message});
+}
