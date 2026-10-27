@@ -1,0 +1,21 @@
+VALIDACIÓN · ENTREGA CONSOLIDADA
+
+- Compilación de producción Next.js: correcta.
+- TypeScript: sin errores.
+- ESLint: 0 errores; 22 advertencias existentes de imágenes sin next/image.
+- Pruebas API y seguridad: 19 aprobadas, 0 fallos.
+- Pruebas de sesión administrativa: 7 aprobadas, 0 fallos.
+- Navegador Chromium: comprobados visitante, propietaria y cliente por separado;
+  calendario público sin nombres/servicios/identificadores, calendario privado,
+  alta manual con servicio persistido, reserva autenticada y acceso a mis citas.
+- Probadas 36 combinaciones de vistas/ancho: 320, 390, 768 y 1440 px, sin
+  desbordamiento horizontal. Revisión visual de hero, registro, reserva y admin.
+- Verificados ojo independiente, igualdad de campos, combo y avisos eliminados.
+- No hubo errores JavaScript de página en esos flujos.
+- Revisión de whitespace de ambos repos: correcta.
+
+Las pruebas de datos se hicieron con Prisma y PGlite local desechable, sin tocar
+producción. No equivalen a una auditoría universal ni a probar todos los móviles,
+Safari o configuraciones de infraestructura. No se modificó Render ni se desplegó.
+Tras desplegar, probar con las cuentas reales y confirmar horarios/duración.
+

@@ -1,0 +1,46 @@
+ZÉNIT SALÓN — ENTREGA CONSOLIDADA · 27 OCTUBRE 2026
+
+Esta es una actualización incremental sobre la primera entrega YA aplicada.
+Contiene archivos completos modificados, conservando sus carpetas. No reemplaza
+el repositorio entero. Extraé en la raíz del repo correspondiente y aceptá
+reemplazar estos archivos; no borres el resto. No copiar dentro de otra carpeta.
+Incluye la corrección de sesión/401 pendiente: no aplicar el ZIP antiguo aparte.
+
+ORDEN: primero backend y esperar despliegue correcto; después frontend.
+No hay migraciones nuevas, cambios de dependencias ni variables nuevas.
+No ejecutar owner:provision: la cuenta y contraseña existentes se conservan.
+No se incluyen .env, credenciales, bases de datos, node_modules ni archivos .git.
+
+CAMBIOS
+- Calendario mensual compartido, navegación de meses, Hoy y actualización.
+- Público sin iniciar sesión: disponibilidad y horas, sin datos personales.
+- Cuenta necesaria para guardar reservas de tarifa definida; se vuelve a validar
+  el cupo al guardar. Servicios cotizados siguen el flujo de coordinación.
+- Dueña: nombres/servicios, detalle del día, crear cita con servicio o bloqueo,
+  confirmar, completar, cancelar y reprogramar. Horarios semanales y excepciones
+  por fecha siguen en Abrir horarios. Guardar horarios publica disponibilidad.
+- Hero con fondo original y contraste oscuro; logo, textos y botones conservados.
+- Combo Tratamiento Completo; se retiraron los dos avisos indicados en Servicios.
+- Confirmación de contraseña con su propio ojo y el mismo aspecto del campo.
+- Se evita pedir productos/categorías privados antes de autenticar al admin.
+
+Agenda actual: un solo recurso simultáneo, zona America/Costa_Rica.
+Calendario público limitado a 90 días; no muestra fichas ni detalles de terceros.
+La lectura pública no permite crear ni modificar citas sin autorización.
+POS general y cuentas por cobrar corresponden al siguiente proyecto System Lab.
+No hay sincronización nueva con ese POS en esta entrega.
+
+REPOSITORIO: zenit-salon-backend
+Base main verificada: 0e416ed1571cbdfde91925cd65bde58d3090d574
+
+Validar en la raíz del backend:
+npm ci --include=dev
+npm test
+
+La suite de integración requiere TEST_DATABASE_URL de una base desechable.
+No ejecutar pruebas de integración contra la base del salón.
+Luego hacer commit/push como acostumbrás y esperar despliegue de Render.
+
+Después: abrir /admin en sesión privada; no debe pedir catálogo antes de entrar.
+Entrar como dueña, revisar calendario y Abrir horarios. En ventana privada,
+abrir /reservar y confirmar que solo aparecen disponibilidad y horas.

@@ -1,6 +1,6 @@
 # Zénit Salón — API
 
-Club de clientes, catálogo, pedidos persistentes y agenda privada. Node 22.13+
+Club de clientes, catálogo, pedidos persistentes y agenda con disponibilidad pública. Node 22.13+
 y PostgreSQL. Leé `LEER_PRIMERO_ZENIT.txt` para aplicar esta actualización.
 
 ```bash
@@ -27,10 +27,16 @@ mediante `POST /api/auth/password` también revoca las sesiones anteriores.
 
 ## Agenda
 
-- `GET /api/agenda/availability?date=YYYY-MM-DD&services=slug1,slug2`: solo cliente
-  autenticado; únicamente horas, duración y disponibilidad, sin datos ajenos.
-- `GET /api/agenda/mine`: citas propias.
-- `POST /api/agenda/appointments`: fecha, hora, servicios, notas y requestKey UUID.
+- `GET /api/agenda/calendar?month=YYYY-MM&services=slug1,slug2`: público; días
+  disponibles, completos o cerrados, sin identidad ni detalles de citas.
+- `GET /api/agenda/availability?date=YYYY-MM-DD&services=slug1,slug2`: público;
+  únicamente horas, duración y disponibilidad. Los servicios son opcionales; sin
+  selección se muestran cupos de 15 minutos. Horizonte público de 90 días.
+- `GET /api/agenda/admin/calendar?month=YYYY-MM`: solo ADMIN; calendario privado
+  con nombres, servicios y detalles de las citas.
+- `GET /api/agenda/mine`: autenticado; citas propias.
+- `POST /api/agenda/appointments`: autenticado; fecha, hora, servicios, notas
+  y requestKey UUID. Consultar disponibilidad no permite reservar sin ingresar.
 - `PATCH /api/agenda/appointments/:id/cancel`: cancelación de cita propia futura.
 - Solo ADMIN: settings GET/PUT, services GET/PATCH, appointments GET/PATCH y manual POST.
 

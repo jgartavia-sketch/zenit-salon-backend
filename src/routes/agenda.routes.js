@@ -11,9 +11,9 @@ import {
   buildSlots,
   validateRanges,
   overlaps,
+  rangesFor,
 } from "../lib/agenda.js";
 const router = Router();
-router.use(requireAuth);
 const dateSchema = z.string().refine(validDate, "Fecha inválida.");
 const time = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
 const range = z.object({ start: time, end: time }).strict();
@@ -39,11 +39,15 @@ const settingsSchema = z
   })
   .strict();
 async function settings(tx = prisma) {
-  return tx.agendaConfig.upsert({
-    where: { id: 1 },
-    create: { id: 1 },
-    update: {},
-  });
+  return (
+    (await tx.agendaConfig.findUnique({ where: { id: 1 } })) || {
+      id: 1,
+      weekly: [],
+      overrides: [],
+      holdHours: 24,
+      noticeMinutes: 120,
+    }
+  );
 }
 const activeWhere = () => ({
   OR: [
@@ -89,23 +93,115 @@ async function servicesFor(tx, ids, owner = false) {
 }
 const wrap = (fn) => (req, res, next) =>
   Promise.resolve(fn(req, res)).catch(next);
+function requestedServices(value) {
+  if (!value) return [];
+  const ids = z
+    .array(z.string().min(1).max(100))
+    .min(1)
+    .max(10)
+    .parse(String(value).split(","));
+  if (new Set(ids).size !== ids.length)
+    throw httpError(400, "Hay servicios repetidos.");
+  return ids;
+}
+const monthSchema = z.string().regex(/^20[2-9]\d-(0[1-9]|1[0-2])$/);
+function monthDates(month) {
+  const [year, m] = month.split("-").map(Number);
+  return Array.from(
+    { length: new Date(Date.UTC(year, m, 0)).getUTCDate() },
+    (_, i) => `${month}-${String(i + 1).padStart(2, "0")}`,
+  );
+}
+async function monthSnapshot(month, ids, owner = false) {
+  const dates = monthDates(month);
+  const now = new Date();
+  const first = instant(dates[0], "00:00");
+  const end = new Date(+instant(dates.at(-1), "00:00") + 86400000);
+  const config = await settings();
+  const duration = ids.length ? (await servicesFor(prisma, ids)).duration : 15;
+  // Only privileged callers may retrieve names, services, or appointment identifiers.
+  const appointments = await prisma.appointment.findMany({
+    where: { startAt: { lt: end }, endAt: { gt: first } },
+    select: owner
+      ? {
+          id: true,
+          customerName: true,
+          startAt: true,
+          endAt: true,
+          status: true,
+          expiresAt: true,
+          services: true,
+          notes: true,
+        }
+      : { startAt: true, endAt: true, status: true, expiresAt: true },
+    orderBy: { startAt: "asc" },
+  });
+  const live = appointments.filter(
+    (x) =>
+      ["CONFIRMED", "BLOCKED"].includes(x.status) ||
+      (x.status === "PENDING" && +x.expiresAt > +now),
+  );
+  const days = dates.map((date) => {
+    const slots = buildSlots(config, date, duration, live, now);
+    const free = slots.filter((s) => s.available).length;
+    const state =
+      date < crDate(now)
+        ? "past"
+        : !owner && instant(date, "00:00") > new Date(+now + 90 * 86400000)
+          ? "outside"
+          : !rangesFor(config, date).length
+            ? "closed"
+            : free
+              ? "available"
+              : "full";
+    return { date, state, availableSlots: free, totalSlots: slots.length };
+  });
+  return {
+    month,
+    timeZone: "America/Costa_Rica",
+    durationMinutes: duration,
+    days,
+    ...(owner
+      ? {
+          appointments: appointments.map((a) => ({
+            ...a,
+            status:
+              a.status === "PENDING" && +a.expiresAt <= +now
+                ? "EXPIRED"
+                : a.status,
+          })),
+        }
+      : {}),
+  };
+}
+router.get(
+  "/calendar",
+  rateLimit("public-calendar", 180, 5),
+  wrap(async (req, res) => {
+    const month = monthSchema.parse(req.query.month);
+    const dates = monthDates(month);
+    if (
+      dates.at(-1) < crDate() ||
+      instant(dates[0], "00:00") > new Date(Date.now() + 90 * 86400000)
+    )
+      throw httpError(400, "Consultá los próximos 90 días de agenda.");
+    res.json(await monthSnapshot(month, requestedServices(req.query.services)));
+  }),
+);
 router.get(
   "/availability",
+  rateLimit("public-availability", 180, 5),
   wrap(async (req, res) => {
     const date = dateSchema.parse(req.query.date);
-    const ids = z
-      .array(z.string().min(1).max(100))
-      .min(1)
-      .max(10)
-      .parse(String(req.query.services || "").split(","));
-    if (new Set(ids).size !== ids.length)
-      throw httpError(400, "Hay servicios repetidos.");
+    const ids = requestedServices(req.query.services);
     if (
       date < crDate() ||
       instant(date, "00:00") > new Date(Date.now() + 90 * 86400000)
     )
       throw httpError(400, "Elegí una fecha dentro de los próximos 90 días.");
-    const { duration } = await servicesFor(prisma, ids);
+    const duration = ids.length
+      ? (await servicesFor(prisma, ids)).duration
+      : 15;
     const config = await settings();
     res.json({
       date,
@@ -115,6 +211,7 @@ router.get(
     });
   }),
 );
+router.use(requireAuth);
 router.get(
   "/mine",
   wrap(async (req, res) => {
@@ -232,6 +329,12 @@ router.patch(
 );
 router.use(requireAdminKey);
 router.get(
+  "/admin/calendar",
+  wrap(async (req, res) => {
+    res.json(await monthSnapshot(monthSchema.parse(req.query.month), [], true));
+  }),
+);
+router.get(
   "/settings",
   wrap(async (_req, res) => res.json({ settings: await settings() })),
 );
@@ -316,6 +419,7 @@ const manual = z
     time,
     durationMinutes: z.number().int().min(15).max(720),
     customerName: z.string().trim().min(2).max(100),
+    serviceSlug: z.string().trim().min(1).max(100).optional(),
     phone: z.string().trim().max(30).default(""),
     customerId: z.uuid().optional(),
     customerEmail: z.email().trim().toLowerCase().optional(),
@@ -367,6 +471,18 @@ router.post(
           400,
           "Ese correo no corresponde a un cliente registrado activo.",
         );
+      const service =
+        input.serviceSlug && !input.blocked
+          ? await tx.salonService.findFirst({
+              where: {
+                slug: input.serviceSlug,
+                active: true,
+                category: { active: true },
+              },
+            })
+          : null;
+      if (input.serviceSlug && !input.blocked && !service)
+        throw httpError(400, "Seleccioná un servicio vigente.");
       const created = await tx.appointment.create({
         data: {
           customerId: linked?.id || input.customerId,
@@ -376,7 +492,16 @@ router.post(
           endAt: end,
           status: input.blocked ? "BLOCKED" : "CONFIRMED",
           notes: input.notes,
-          services: [],
+          services: service
+            ? [
+                {
+                  id: service.id,
+                  slug: service.slug,
+                  name: service.name,
+                  durationMinutes: input.durationMinutes,
+                },
+              ]
+            : [],
           requestKey: input.requestKey,
           requestDigest: hash,
         },

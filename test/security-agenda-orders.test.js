@@ -135,7 +135,7 @@ test(
                   service.slug,
               )
             ).status,
-            401,
+            200,
           );
         },
       );
@@ -185,6 +185,57 @@ test(
           "time",
         ]);
       });
+      await t.test(
+        "calendario público: cupos sin identidad, y escritura protegida",
+        async () => {
+          const month = date.slice(0, 7);
+          const result = await call(`/api/agenda/calendar?month=${month}`);
+          assert.equal(result.status, 200);
+          assert.ok(
+            result.body.days.some(
+              (x) => x.date === date && x.state === "available",
+            ),
+          );
+          assert.ok(!("appointments" in result.body));
+          assert.ok(!JSON.stringify(result.body).includes("Private"));
+          assert.deepEqual(Object.keys(result.body.days[0]).sort(), [
+            "availableSlots",
+            "date",
+            "state",
+            "totalSlots",
+          ]);
+          assert.equal(
+            (await call(`/api/agenda/admin/calendar?month=${month}`)).status,
+            401,
+          );
+          assert.equal(
+            (
+              await call(
+                `/api/agenda/admin/calendar?month=${month}`,
+                "GET",
+                undefined,
+                at,
+              )
+            ).status,
+            403,
+          );
+          assert.equal(
+            (
+              await call("/api/agenda/appointments", "POST", {
+                date,
+                time: "09:00",
+                services: [service.slug],
+                requestKey: randomUUID(),
+              })
+            ).status,
+            401,
+          );
+          assert.equal(
+            (await call("/api/agenda/calendar?month=2026-99")).status,
+            400,
+          );
+        },
+      );
       let appointment;
       await t.test(
         "reservas simultáneas: un solo ganador y reintento idempotente",
@@ -228,6 +279,35 @@ test(
           assert.ok(
             !JSON.stringify(availability.body).includes("Private notes"),
           );
+        },
+      );
+      await t.test(
+        "calendario privado muestra cliente y servicio; público solo disponibilidad",
+        async () => {
+          const month = date.slice(0, 7);
+          const result = await call(
+            `/api/agenda/admin/calendar?month=${month}`,
+            "GET",
+            undefined,
+            ot,
+          );
+          assert.equal(result.status, 200);
+          const item = result.body.appointments.find(
+            (x) => x.id === appointment.id,
+          );
+          assert.ok(item.customerName.startsWith("Private"));
+          assert.equal(item.services[0].name, "QA Cut");
+          const publicResult = await call(
+            `/api/agenda/calendar?month=${month}&services=${service.slug}`,
+          );
+          assert.equal(publicResult.status, 200);
+          for (const secret of [
+            appointment.id,
+            item.customerName,
+            "Private notes",
+            "QA Cut",
+          ])
+            assert.ok(!JSON.stringify(publicResult.body).includes(secret));
         },
       );
       await t.test(
