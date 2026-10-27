@@ -1,57 +1,63 @@
 import jwt from "jsonwebtoken";
 import { config } from "../config.js";
 import { prisma } from "../lib/prisma.js";
-
-function bearerToken(req) {
-  const header = req.get("authorization") || "";
-  return header.startsWith("Bearer ") ? header.slice(7) : "";
+export const tokenOptions = {
+  algorithms: ["HS256"],
+  issuer: "zenit-salon",
+  audience: "zenit-web",
+};
+export function signToken(account, kind = "customer") {
+  return jwt.sign(
+    { sub: account.id, kind, sv: account.sessionVersion },
+    config.jwtSecret,
+    {
+      algorithm: "HS256",
+      issuer: tokenOptions.issuer,
+      audience: tokenOptions.audience,
+      expiresIn: kind === "customer" && account.role !== "ADMIN" ? "7d" : "8h",
+    },
+  );
 }
-
-export async function requireAuth(req, res, next) {
-  try {
-    const token = bearerToken(req);
-    if (!token) return res.status(401).json({ error: "Debés iniciar sesión." });
-
-    const payload = jwt.verify(token, config.jwtSecret);
-    if (payload.kind === "staff") {
-      return res.status(401).json({ error: "Esta sesión no corresponde a un cliente." });
+function authenticate(kind) {
+  return async (req, res, next) => {
+    let payload;
+    try {
+      const token = (req.get("authorization") || "").replace(/^Bearer /, "");
+      payload = jwt.verify(token, config.jwtSecret, tokenOptions);
+      if (
+        typeof payload !== "object" ||
+        payload.kind !== kind ||
+        typeof payload.sub !== "string"
+      )
+        throw Error();
+    } catch {
+      return res
+        .status(401)
+        .json({ error: "La sesión venció o no es válida." });
     }
-
-    const user = await prisma.user.findUnique({ where: { id: payload.sub } });
-    if (!user) return res.status(401).json({ error: "La sesión ya no es válida." });
-
-    req.user = user;
-    next();
-  } catch {
-    return res.status(401).json({ error: "La sesión venció o no es válida." });
-  }
+    try {
+      const account = await (
+        kind === "staff" ? prisma.staffAccount : prisma.user
+      ).findUnique({ where: { id: payload.sub } });
+      if (!account || !account.active || payload.sv !== account.sessionVersion)
+        return res.status(401).json({ error: "La sesión ya no es válida." });
+      if (kind === "staff") req.staff = account;
+      else req.user = account;
+      next();
+    } catch (error) {
+      next(error);
+    }
+  };
 }
-
-export async function requireStaff(req, res, next) {
-  try {
-    const token = bearerToken(req);
-    if (!token) return res.status(401).json({ error: "Debés iniciar sesión como empleado." });
-
-    const payload = jwt.verify(token, config.jwtSecret);
-    if (payload.kind !== "staff") {
-      return res.status(401).json({ error: "Esta sesión no corresponde al personal." });
-    }
-
-    const staff = await prisma.staffAccount.findUnique({ where: { id: payload.sub } });
-    if (!staff || !staff.active) {
-      return res.status(401).json({ error: "La cuenta del empleado no está activa." });
-    }
-
-    req.staff = staff;
-    next();
-  } catch {
-    return res.status(401).json({ error: "La sesión venció o no es válida." });
-  }
-}
-
+export const requireAuth = authenticate("customer");
+export const requireStaff = authenticate("staff");
+// Kept export name to avoid disrupting existing routes. Shared API keys are no longer accepted.
 export function requireAdminKey(req, res, next) {
-  if (req.get("x-admin-key") !== config.adminApiKey) {
-    return res.status(401).json({ error: "Acceso administrativo no autorizado." });
-  }
-  next();
+  requireAuth(req, res, () => {
+    if (req.user.role !== "ADMIN")
+      return res
+        .status(403)
+        .json({ error: "Acceso exclusivo para la administración." });
+    next();
+  });
 }

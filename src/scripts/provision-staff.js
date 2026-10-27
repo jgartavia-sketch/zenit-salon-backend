@@ -10,8 +10,8 @@ function readStaff(number) {
   if (!name || !email || !password) {
     throw new Error(`Faltan STAFF_${number}_NAME, STAFF_${number}_EMAIL o STAFF_${number}_PASSWORD.`);
   }
-  if (password.length < 8) {
-    throw new Error(`STAFF_${number}_PASSWORD debe tener al menos 8 caracteres.`);
+  if (password.length < 12 || Buffer.byteLength(password, "utf8") > 72) {
+    throw new Error(`STAFF_${number}_PASSWORD debe tener entre 12 caracteres y 72 bytes.`);
   }
 
   return { name, email, password };
@@ -28,7 +28,7 @@ async function provision() {
     const passwordHash = await bcrypt.hash(account.password, 12);
     await prisma.staffAccount.upsert({
       where: { email: account.email },
-      update: { name: account.name, passwordHash, active: true },
+      update: { name: account.name, passwordHash, active: true, sessionVersion: {increment:1} },
       create: {
         name: account.name,
         email: account.email,

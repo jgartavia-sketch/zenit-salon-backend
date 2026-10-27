@@ -1,6 +1,8 @@
 import { Router } from "express";
 import bcrypt from "bcryptjs";
-import jwt from "jsonwebtoken";
+import { signToken } from "../middleware/auth.js";
+import { rateLimit } from "../middleware/rate-limit.js";
+import { httpError } from "../lib/security.js";
 import { z } from "zod";
 import { config } from "../config.js";
 import { prisma } from "../lib/prisma.js";
@@ -13,7 +15,7 @@ const registerSchema = z.object({
   name: z.string().trim().min(3).max(100),
   email: z.email().trim().toLowerCase(),
   phone: z.string().trim().min(8).max(30),
-  password: z.string().min(8).max(100),
+  password: z.string().min(8).max(72).refine(value=>Buffer.byteLength(value,"utf8")<=72,"La contraseña supera los 72 bytes."),
   referral: z.string().trim().max(30).optional().or(z.literal("")),
 });
 const loginSchema = z.object({
@@ -21,13 +23,7 @@ const loginSchema = z.object({
   password: z.string().min(1).max(100),
 });
 
-function createToken(user) {
-  return jwt.sign({ sub: user.id, role: user.role }, config.jwtSecret, {
-    expiresIn: config.jwtExpiresIn,
-  });
-}
-
-router.post("/register", async (req, res, next) => {
+router.post("/register", rateLimit("register", 8, 60), async (req, res, next) => {
   try {
     const input = registerSchema.parse(req.body);
     const exists = await prisma.user.findUnique({ where: { email: input.email } });
@@ -43,23 +39,26 @@ router.post("/register", async (req, res, next) => {
       }
     }
 
+    const passwordHash = await bcrypt.hash(input.password,12);
     const registration = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(724032)`;
       const created = await tx.user.create({
         data: {
           customerCode: `ZEN-${crypto.randomUUID().slice(0, 8).toUpperCase()}`,
           name: input.name,
           email: input.email,
           phone: input.phone,
-          passwordHash: await bcrypt.hash(input.password, 12),
+          passwordHash,
           referredById: referralCode?.ownerId,
         },
       });
 
       if (referralCode) {
-        await tx.referralCode.update({
-          where: { id: referralCode.id },
+        const claimed = await tx.referralCode.updateMany({
+          where: { id: referralCode.id, usedAt: null, expiresAt: { gt: new Date() } },
           data: { usedAt: new Date(), usedById: created.id },
         });
+        if (claimed.count !== 1) throw httpError(409, "Ese referido ya se utilizó o venció.");
         await tx.user.update({
           where: { id: referralCode.ownerId },
           data: {
@@ -93,7 +92,7 @@ router.post("/register", async (req, res, next) => {
 
     const customer = publicUser(user);
     res.status(201).json({
-      token: createToken(user),
+      token: signToken(user),
       customer,
       notifications: {
         welcomeEmailQueued: true,
@@ -116,14 +115,14 @@ router.post("/register", async (req, res, next) => {
   }
 });
 
-router.post("/login", async (req, res, next) => {
+router.post("/login", rateLimit("login-ip", 40), rateLimit("login-account", 12, 15, true), async (req, res, next) => {
   try {
     const input = loginSchema.parse(req.body);
     const user = await prisma.user.findUnique({ where: { email: input.email } });
-    if (!user || !(await bcrypt.compare(input.password, user.passwordHash))) {
+    if (!user || !user.active || !(await bcrypt.compare(input.password, user.passwordHash))) {
       return res.status(401).json({ error: "Correo o contraseña incorrectos." });
     }
-    res.json({ token: createToken(user), customer: publicUser(user) });
+    res.json({ token: signToken(user), customer: publicUser(user) });
   } catch (error) {
     next(error);
   }
@@ -157,6 +156,16 @@ router.get("/me", requireAuth, async (req, res, next) => {
   }
 });
 
-router.post("/logout", (_req, res) => res.json({ ok: true }));
+router.post('/logout', requireAuth, async (req,res,next) => {
+  try { await prisma.user.update({where:{id:req.user.id},data:{sessionVersion:{increment:1}}}); res.json({ok:true}); } catch(error){next(error);}
+});
+router.post('/password', requireAuth, rateLimit('password', 8), async (req,res,next) => {
+  try {
+    const input = z.object({currentPassword:z.string().min(1).max(100),password:z.string().min(12).max(72).refine(v=>Buffer.byteLength(v,"utf8")<=72)}).parse(req.body);
+    if (!await bcrypt.compare(input.currentPassword,req.user.passwordHash)) return res.status(401).json({error:'La contraseña actual no coincide.'});
+    await prisma.user.update({where:{id:req.user.id},data:{passwordHash:await bcrypt.hash(input.password,12),sessionVersion:{increment:1}}});
+    res.json({ok:true});
+  } catch(error){next(error);}
+});
 
 export default router;

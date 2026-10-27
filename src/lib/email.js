@@ -87,7 +87,7 @@ export async function sendWelcomeEmail(customer) {
     `,
   });
 
-  console.info(`Correo de bienvenida enviado a ${customer.email}: ${info.messageId}`);
+  console.info(`Correo de bienvenida enviado: ${info.messageId}`);
   return { sent: true };
 }
 
@@ -129,7 +129,7 @@ export async function sendReferralRegistrationEmail(owner, referredCustomer, poi
     `,
   });
 
-  console.info(`Aviso de referido enviado a ${owner.email}: ${info.messageId}`);
+  console.info(`Aviso de referido enviado: ${info.messageId}`);
   return { sent: true };
 }
 
@@ -179,6 +179,6 @@ export async function sendPointsAddedEmail(customer, award) {
     `,
   });
 
-  console.info(`Aviso de puntos enviado a ${customer.email}: ${info.messageId}`);
+  console.info(`Aviso de puntos enviado: ${info.messageId}`);
   return { sent: true };
 }

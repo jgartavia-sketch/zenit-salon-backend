@@ -1,0 +1,50 @@
+VALIDACION DE LA ENTREGA — 26 OCTUBRE 2026
+
+ALCANCE: codigo de zenit-salon-demo y zenit-salon-backend en los commits base
+indicados en LEER_PRIMERO_ZENIT.txt. Sin modificar despliegues ni datos reales.
+
+RESULTADOS
+- Frontend: compilacion de produccion Next 16.4.3 correcta; TypeScript sin errores.
+- ESLint: cero errores, 22 advertencias de optimizacion de imagenes existentes.
+  Se conservaron las etiquetas img para no alterar la entrega visual original.
+- Backend: esquema Prisma validado y cliente generado con Prisma 6.19.3.
+- Las cinco migraciones SQL se aplicaron a una base de prueba nueva, incluidas
+  las cuatro existentes y la nueva migracion transaccional de esta entrega.
+- Pruebas unitarias: 2 aprobadas. La suite de integracion se omite deliberadamente
+  en npm test si no existe TEST_DATABASE_URL.
+- Suite de integracion ejecutada aparte: 17 pruebas reportadas por node:test,
+  cero fallos. Permisos, privacidad de disponibilidad, horarios, idempotencia,
+  peticiones simultaneas, cancelaciones, vencimientos, stock, precios de servidor,
+  referido de uso unico, factura compartida entre admin/staff, archivos falsos,
+  tokens alterados, cierre de sesion y limite persistente de intentos.
+- Se utilizo PostgreSQL compatible en memoria (PGlite), con cliente Prisma real
+  y una conexion, sin sustituir las consultas por mocks. Las peticiones HTTP se
+  lanzaron en paralelo; no se realizo una prueba de carga con varias instancias
+  de PostgreSQL ni con datos productivos.
+- Navegador Chromium: login de propietaria, cookies HttpOnly, rechazo CSRF,
+  aislamiento de permisos, reserva guardada, vista Mis citas, compra guardada y
+  stock descontado. Prueba visual en escritorio (1440px) y celular (390px),
+  sin desbordamiento horizontal en las pantallas revisadas.
+- La prueba de navegador uso el servidor de desarrollo y datos ficticios. La
+  compilacion de produccion se verifico por separado. Secure se activa solo en
+  produccion; requiere HTTPS en el backend y el sitio.
+- npm audit: antes 10 avisos en backend y 4 en frontend (consulta inicial de
+  dependencias de produccion); despues, cero avisos en ambos proyectos, incluyendo
+  la consulta completa con dependencias de desarrollo disponible en esta sesion.
+- Actualizaciones de seguridad: Next y su configuracion ESLint, Nodemailer,
+  dependencias transitivas y override de deepmerge-ts 8 compatible con la CLI
+  Prisma utilizada. No se cambio Prisma a una version mayor sin necesidad.
+
+LIMITES Y ACTIVACION
+- Cero avisos de npm audit no constituye una garantia de ausencia de fallos.
+- No se auditaron credenciales, DNS, Vercel, Render, SMTP ni PostgreSQL reales.
+  Correo y Cloudinary requieren la prueba de funcionamiento despues del despliegue.
+- El acceso de la duena se crea con owner:provision y sus datos reales, mediante
+  variables privadas. Ninguna cuenta productiva se creo desde esta sesion.
+- La agenda arranca cerrada; hay que configurar horarios y duraciones. Modelo de
+  un recurso a la vez; no implementa varios profesionales atendiendo en paralelo.
+- Las citas manuales vinculadas por correo aparecen en Mi cuenta. Solicitudes
+  historicas de WhatsApp no se convierten automaticamente en citas confirmadas.
+- El puente privado para POS es de lectura y queda apagado sin su secreto.
+  La sincronizacion, el acceso al POS y cuentas por cobrar estan pendientes del
+  repositorio general System Lab, conforme al alcance acordado.

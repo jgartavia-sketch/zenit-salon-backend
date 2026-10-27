@@ -1,40 +1,72 @@
-# Zénit Salón — Backend
+# Zénit Salón — API
 
-API independiente para Club Zénit: registro, login JWT, cuenta, puntos, referidos e historial.
-
-## Inicio local
-
-1. Copiar `.env.example` como `.env` y completar los secretos.
-2. Crear una base PostgreSQL vacía.
-3. Ejecutar:
+Club de clientes, catálogo, pedidos persistentes y agenda privada. Node 22.13+
+y PostgreSQL. Leé `LEER_PRIMERO_ZENIT.txt` para aplicar esta actualización.
 
 ```bash
-npm install
-npx prisma generate
-npx prisma migrate dev --name init
-npm run dev
+npm ci
+npm run prisma:generate
+npm run prisma:migrate
+npm start
 ```
 
-La API abre en `http://localhost:4000`. Salud: `GET /api/health`.
+Configurar `.env` según `.env.example`; nunca subir secretos a Git.
+No utilizar `prisma migrate reset` en una base existente.
 
-## Regla de puntos
+## Accesos
 
-Cada ₡100 pagados generan 1 punto. Solo una llamada administrativa autenticada
-con `x-admin-key` puede acreditar compras o hacer ajustes.
+Clientes y propietaria: `POST /api/auth/login`. Personal: `POST /api/staff/login`.
+El backend admite Bearer JWT firmado, con issuer, audience y versión de sesión.
+El frontend oficial lo guarda mediante su intermediario en cookies HttpOnly.
+La clave compartida `x-admin-key` ya no habilita administración.
 
-## Endpoints
+Crear o actualizar a la dueña con `npm run owner:provision`, usando las variables
+OWNER_* temporalmente. Esto no crea una cuenta en el POS general.
+`POST /api/auth/logout` revoca las sesiones del usuario. Cambiar la contraseña
+mediante `POST /api/auth/password` también revoca las sesiones anteriores.
 
-- `POST /api/auth/register`
-- `POST /api/auth/login`
-- `GET /api/auth/me` — Bearer token
-- `POST /api/auth/logout`
-- `POST /api/referrals` — Bearer token
-- `GET /api/admin/customers` — `x-admin-key`
-- `POST /api/admin/points/purchase` — `x-admin-key`
-- `POST /api/admin/points/adjust` — `x-admin-key`
+## Agenda
 
-## Producción
+- `GET /api/agenda/availability?date=YYYY-MM-DD&services=slug1,slug2`: solo cliente
+  autenticado; únicamente horas, duración y disponibilidad, sin datos ajenos.
+- `GET /api/agenda/mine`: citas propias.
+- `POST /api/agenda/appointments`: fecha, hora, servicios, notas y requestKey UUID.
+- `PATCH /api/agenda/appointments/:id/cancel`: cancelación de cita propia futura.
+- Solo ADMIN: settings GET/PUT, services GET/PATCH, appointments GET/PATCH y manual POST.
 
-Desplegar como servicio Node, configurar las variables de `.env.example` y
-ejecutar `npm run prisma:migrate` como comando previo al arranque. En el frontend
-definir `NEXT_PUBLIC_API_URL` con la URL pública del backend.
+Agenda para un recurso, en America/Costa_Rica, sin citas cruzadas. Duraciones
+configuradas en el catálogo, horarios semanales y excepciones por fecha. Los
+servicios QUOTE requieren coordinación y alta manual por la propietaria.
+Las solicitudes PENDING con expiresAt pasado se muestran vencidas y no bloquean
+cupos; no necesitan tareas programadas. La reserva valida otra vez el cupo
+mientras mantiene un bloqueo transaccional PostgreSQL.
+
+## Pedidos
+
+- `GET /api/orders/mine`: pedidos propios.
+- `POST /api/orders`: requestKey UUID, expectedTotal entero e items {slug, quantity}.
+  Se rechazan precios desactualizados, se calcula el total en servidor y se
+  aparta stock en una transacción. Repetir la misma solicitud no descuenta otra vez.
+- `PATCH /api/orders/:id/cancel`: cliente titular, solo PENDING.
+- Solo ADMIN: GET /api/orders y PATCH /api/orders/:id (COMPLETED/CANCELLED).
+
+La cancelación devuelve stock una sola vez. No hay pasarela de pago ni crédito
+comercial en esta entrega. Los puntos se registran por factura única desde la
+administración o personal, sin acreditación automática duplicada por pedidos.
+
+## Pruebas
+
+```bash
+npm test
+```
+
+Las pruebas básicas no necesitan base. La suite de integración incluida se
+activa con TEST_DATABASE_URL apuntando a una PostgreSQL local desechable llamada
+zenit_test, con las migraciones ya aplicadas. Modifica su agenda y crea fixtures;
+no utilizar datos reales. El repositorio no incluye la infraestructura de QA.
+
+## Integración POS
+
+Ver `INTEGRACION_POS_ZENIT.md`. La API privada queda preparada, desactivada por
+defecto y limitada a lectura. El consumidor y las escrituras en el POS son trabajo
+pendiente de System Lab; aún no existe sincronización bidireccional.

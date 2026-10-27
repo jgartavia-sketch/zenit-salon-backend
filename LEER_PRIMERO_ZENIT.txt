@@ -1,0 +1,68 @@
+ZENIT SALON — BACKEND — 26 OCTUBRE 2026
+BASE: 71eadff43d997f94e5af84fe9b50c46a3f37353f
+
+Este ZIP contiene archivos completos modificados y nuevos, con rutas relativas a
+la raíz de zenit-salon-backend. No reemplaces el frontend con este ZIP.
+No contiene .env, contraseñas, node_modules ni datos de producción.
+
+1. Guardá una copia de la base PostgreSQL y del despliegue actual.
+2. Compará tu HEAD con la base indicada y revisá cambios locales antes de extraer.
+   Si modificaste estos mismos archivos, integrá ambos cambios antes del push.
+3. Extraé sobre la raíz de tu repositorio backend, respetando las carpetas.
+4. Conservá DATABASE_URL, correo y Cloudinary actuales. Configurá JWT_SECRET
+   aleatorio (mínimo 32 caracteres). El ejemplo ya no incluye secretos ficticios.
+5. En el entorno que tenga acceso a la base, ejecutá:
+   npm ci
+   npm run prisma:generate
+   npm run prisma:migrate
+   npm test
+   La migración nueva agrega tablas y columnas; no borra tablas ni clientes.
+   NO uses prisma migrate reset ni prisma db push en producción.
+6. Para el acceso de la dueña, configurá temporalmente OWNER_NAME, OWNER_EMAIL,
+   OWNER_PHONE y OWNER_PASSWORD (mínimo 12 caracteres, máximo 72 bytes).
+   Ejecutá npm run owner:provision. Después quitá OWNER_PASSWORD del entorno.
+   No incluyas datos de acceso en Git. La dueña entra por /admin y puede cambiar
+   su contraseña en Mi acceso. El script no crea ninguna cuenta en el POS general.
+7. Desplegá el backend y el frontend de esta misma entrega de forma coordinada.
+   La antigua clave x-admin-key deja de funcionar y las sesiones anteriores vencen.
+8. Entrá en /admin > Abrir horarios. Definí la duración de cada servicio y guardá
+   la semana laboral. Inicialmente NO se publican horarios inventados.
+
+OPERACION
+- Una agenda para un profesional/recurso a la vez. No permite citas simultáneas.
+- Turnos semanales, pausas, excepciones por fecha, citas externas y bloqueos.
+- Reservas de clientes registrados: pendientes; apartan cupo durante 24 horas
+  por defecto (configurable 1–48 h). Al vencer se libera el espacio al consultar;
+  no depende de un cron. Confirmar requiere que el cupo todavía esté vigente.
+- La dueña puede confirmar, reprogramar, completar y cancelar.
+- Los servicios cotizados se coordinan y se agendan manualmente por su duración.
+- El correo de un cliente en una cita manual la vincula a su cuenta registrada.
+- Pedidos: guardados, con precio validado en servidor y stock apartado.
+  Cancelar devuelve unidades una sola vez. Completarlos exige confirmar que se
+  pagaron y entregaron; no cobra tarjetas ni ejecuta SINPE automáticamente.
+- No se acreditan puntos automáticos por pedido para no duplicarlos con facturas.
+  Administración y personal comparten el control de factura única.
+- Desactivar clientes conserva historial y revoca su acceso. Retirar productos
+  los oculta sin destruir las referencias de pedidos.
+
+INTEGRACION
+La API privada de Zenit queda preparada y desactivada por defecto. La sincronización
+bidireccional con el POS NO está activa: falta modificar el otro repositorio.
+No se crean cuentas por cobrar aquí. Son un cambio del POS general para todos
+los tipos de negocios. Leé INTEGRACION_POS_ZENIT.md antes de habilitar el puente.
+
+COMPROBACION EN PRODUCCION DESPUES DEL PUSH
+- Entrar como dueña y como cliente, guardar horarios y verificar otro navegador.
+- Ver que un cliente solo consulte disponibilidad y sus propios datos.
+- Reservar, confirmar, cancelar y comprobar que el cupo vuelve a aparecer.
+- Crear pedido, revisar stock y cancelar desde la cuenta o administración.
+- Comprobar envío de correos con las credenciales SMTP reales (no incluidas).
+- La revisión del código y npm audit no certifican la seguridad del hosting,
+  de DNS, de la base real ni de credenciales externas que no se han inspeccionado.
+
+Git (revisar el diff antes de confirmar):
+git status
+git diff --check
+git add .
+git commit -m "Refuerza seguridad y agrega agenda y pedidos persistentes de Zenit"
+git push origin main

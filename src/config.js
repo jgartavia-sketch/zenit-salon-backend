@@ -1,6 +1,6 @@
 import "dotenv/config";
 
-const required = ["DATABASE_URL", "JWT_SECRET", "ADMIN_API_KEY"];
+const required = ["DATABASE_URL", "JWT_SECRET"];
 
 for (const key of required) {
   if (!process.env[key]) {
@@ -8,12 +8,12 @@ for (const key of required) {
   }
 }
 
+if (process.env.JWT_SECRET.length < 32 || /reemplazar|example|changeme/i.test(process.env.JWT_SECRET)) throw new Error('JWT_SECRET debe ser aleatorio y tener al menos 32 caracteres.');
 export const config = {
   port: Number(process.env.PORT || 4000),
   nodeEnv: process.env.NODE_ENV || "development",
   jwtSecret: process.env.JWT_SECRET,
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || "7d",
-  adminApiKey: process.env.ADMIN_API_KEY,
 
   frontendUrls: String(
     process.env.FRONTEND_URL || "http://localhost:3000",

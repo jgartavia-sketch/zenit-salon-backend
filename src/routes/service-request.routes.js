@@ -1,7 +1,9 @@
+import {validDate,crDate} from "../lib/agenda.js";
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
 
+import { rateLimit } from "../middleware/rate-limit.js";
 const router = Router();
 
 const serviceRequestSchema = z.object({
@@ -9,11 +11,11 @@ const serviceRequestSchema = z.object({
   phone: z.string().trim().min(8).max(30),
   service: z.string().trim().min(3).max(120),
   details: z.string().trim().min(5).max(1500),
-  preferredDate: z.string().trim().optional().or(z.literal("")),
+  preferredDate: z.string().trim().refine(d=>!d || (validDate(d) && d>=crDate()), "Elegí una fecha válida que no haya pasado.").optional().or(z.literal("")),
   preferredTime: z.string().trim().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional().or(z.literal("")),
 });
 
-router.post("/", async (req, res, next) => {
+router.post("/", rateLimit("service-request", 8, 60), async (req, res, next) => {
   try {
     const input = serviceRequestSchema.parse(req.body);
     const preferredDate = input.preferredDate ? new Date(`${input.preferredDate}T12:00:00.000Z`) : null;

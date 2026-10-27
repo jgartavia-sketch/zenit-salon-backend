@@ -1,6 +1,7 @@
 import { Router } from "express";
 import bcrypt from "bcryptjs";
-import jwt from "jsonwebtoken";
+import { signToken } from "../middleware/auth.js";
+import { rateLimit } from "../middleware/rate-limit.js";
 import { z } from "zod";
 import { config } from "../config.js";
 import { prisma } from "../lib/prisma.js";
@@ -16,19 +17,11 @@ const loginSchema = z.object({
   password: z.string().min(1).max(100),
 });
 
-function createStaffToken(staff) {
-  return jwt.sign(
-    { sub: staff.id, kind: "staff" },
-    config.jwtSecret,
-    { expiresIn: config.jwtExpiresIn },
-  );
-}
-
 function publicStaff(staff) {
   return { id: staff.id, name: staff.name, email: staff.email };
 }
 
-router.post("/login", async (req, res, next) => {
+router.post("/login", rateLimit("staff-ip", 40), rateLimit("staff-account", 12, 15, true), async (req, res, next) => {
   try {
     const input = loginSchema.parse(req.body);
     const staff = await prisma.staffAccount.findUnique({ where: { email: input.email } });
@@ -37,7 +30,7 @@ router.post("/login", async (req, res, next) => {
       return res.status(401).json({ error: "Correo o contraseña incorrectos." });
     }
 
-    res.json({ token: createStaffToken(staff), staff: publicStaff(staff) });
+    res.json({ token: signToken(staff, "staff"), staff: publicStaff(staff) });
   } catch (error) {
     next(error);
   }
@@ -56,7 +49,7 @@ router.get("/customers/search", requireStaff, async (req, res, next) => {
     const input = customerSearchSchema.parse({ email: req.query.email });
     const customer = await prisma.user.findUnique({ where: { email: input.email } });
 
-    if (!customer || customer.role !== "CUSTOMER") {
+    if (!customer || !customer.active || customer.role !== "CUSTOMER") {
       return res.status(404).json({ error: "No existe un cliente con ese correo." });
     }
 
@@ -69,7 +62,7 @@ router.get("/customers/search", requireStaff, async (req, res, next) => {
 const awardPointsSchema = z.object({
   customerId: z.uuid(),
   amountColones: z.coerce.number().int().min(100).max(100_000_000),
-  invoiceNumber: z.string().trim().max(100).optional().or(z.literal("")),
+  invoiceNumber: z.string().trim().min(1).max(100),
   description: z.string().trim().min(3).max(200).default("Compra o servicio confirmado"),
 });
 
@@ -93,8 +86,9 @@ router.post("/points", requireStaff, async (req, res, next) => {
     }
 
     const result = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(724032)`;
       const customer = await tx.user.findUnique({ where: { id: input.customerId } });
-      if (!customer || customer.role !== "CUSTOMER") {
+      if (!customer || !customer.active || customer.role !== "CUSTOMER") {
         const error = new Error("CUSTOMER_NOT_FOUND");
         error.code = "CUSTOMER_NOT_FOUND";
         throw error;
@@ -151,4 +145,7 @@ router.post("/points", requireStaff, async (req, res, next) => {
   }
 });
 
+router.post('/logout', requireStaff, async (req,res,next) => {
+  try { await prisma.staffAccount.update({where:{id:req.staff.id},data:{sessionVersion:{increment:1}}});res.json({ok:true}); }catch(error){next(error);}
+});
 export default router;

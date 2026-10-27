@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { safeImage } from "../lib/security.js";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
 import { pointsFromColones } from "../lib/points.js";
@@ -7,6 +8,12 @@ import { requireAdminKey } from "../middleware/auth.js";
 
 const router = Router();
 router.use(requireAdminKey);
+router.use((req,res,next) => {
+  res.on('finish', () => {
+    if (req.method !== 'GET' && res.statusCode < 400) void prisma.auditEvent.create({data:{actorId:req.user.id,action:`${req.method} ${req.route?.path || req.path}`,targetId:req.params.id || null}}).catch(()=>console.error('AUDIT_WRITE_FAILED'));
+  });
+  next();
+});
 
 function normalizeSlug(value) {
   return String(value || "")
@@ -103,7 +110,7 @@ router.get("/customers", async (req, res, next) => {
       Math.max(1, Number.parseInt(String(req.query.pageSize || "50"), 10) || 50),
     );
     const where = {
-      role: "CUSTOMER",
+      role: "CUSTOMER", active: true,
       ...(q
         ? {
             OR: [
@@ -164,6 +171,8 @@ router.patch("/customers/:id", async (req, res, next) => {
     }
 
     const updated = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(724032)`;
+      const lockedCustomer = await tx.user.findUnique({where:{id:current.id}});
       const customer = await tx.user.update({
         where: { id: current.id },
         data: {
@@ -178,13 +187,13 @@ router.patch("/customers/:id", async (req, res, next) => {
       const pointChanges = [
         {
           field: "purchasePoints",
-          previous: current.purchasePoints,
+          previous: lockedCustomer.purchasePoints,
           next: input.purchasePoints,
           label: "puntos por compras",
         },
         {
           field: "referralPoints",
-          previous: current.referralPoints,
+          previous: lockedCustomer.referralPoints,
           next: input.referralPoints,
           label: "puntos por referidos",
         },
@@ -221,19 +230,9 @@ router.delete("/customers/:id", async (req, res, next) => {
       return res.status(404).json({ error: "El cliente no existe." });
     }
 
-    await prisma.$transaction(async (tx) => {
-      await tx.user.updateMany({
-        where: { referredById: customer.id },
-        data: { referredById: null },
-      });
-      await tx.referralCode.updateMany({
-        where: { usedById: customer.id },
-        data: { usedById: null },
-      });
-      await tx.user.delete({ where: { id: customer.id } });
-    });
+    await prisma.user.update({where:{id:customer.id},data:{active:false,sessionVersion:{increment:1}}});
 
-    res.json({ ok: true, deletedCustomer: customer });
+    res.json({ ok: true, deactivatedCustomer: customer });
   } catch (error) {
     next(error);
   }
@@ -241,32 +240,34 @@ router.delete("/customers/:id", async (req, res, next) => {
 
 const purchaseSchema = z.object({
   email: z.email().trim().toLowerCase(),
-  amountColones: z.coerce.number().int().min(100),
+  amountColones: z.coerce.number().int().min(100).max(100_000_000),
   description: z
     .string()
     .trim()
     .min(3)
     .max(200)
     .default("Compra o servicio confirmado"),
-  referenceId: z.string().trim().min(3).max(100).optional(),
+  referenceId: z.string().trim().min(3).max(100),
 });
 
 router.post("/points/purchase", async (req, res, next) => {
   try {
     const input = purchaseSchema.parse(req.body);
     const points = pointsFromColones(input.amountColones);
+    const invoiceNumber = input.referenceId.replace(/\s+/g, " ").toUpperCase();
 
     const user = await prisma.user.findUnique({
       where: { email: input.email },
     });
 
-    if (!user) {
+    if (!user || !user.active || user.role !== "CUSTOMER") {
       return res.status(404).json({
         error: "No existe un cliente con ese correo.",
       });
     }
 
     const updated = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(724032)`;
       const result = await tx.user.update({
         where: { id: user.id },
         data: {
@@ -284,6 +285,7 @@ router.post("/points/purchase", async (req, res, next) => {
           amountColones: input.amountColones,
           description: input.description,
           referenceId: input.referenceId,
+          invoiceNumber,
         },
       });
 
@@ -314,7 +316,7 @@ router.post("/points/adjust", async (req, res, next) => {
       where: { email: input.email },
     });
 
-    if (!user) {
+    if (!user || !user.active || user.role !== "CUSTOMER") {
       return res.status(404).json({
         error: "No existe un cliente con ese correo.",
       });
@@ -327,14 +329,10 @@ router.post("/points/adjust", async (req, res, next) => {
     }
 
     const updated = await prisma.$transaction(async (tx) => {
-      const result = await tx.user.update({
-        where: { id: user.id },
-        data: {
-          purchasePoints: {
-            increment: input.points,
-          },
-        },
-      });
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(724032)`;
+      const guard = await tx.user.updateMany({where:{id:user.id, ...(input.points < 0 ? {purchasePoints:{gte:-input.points}} : {})},data:{purchasePoints:{increment:input.points}}});
+      if (guard.count !== 1) throw Object.assign(new Error('Saldo de puntos insuficiente.'),{status:409});
+      const result = await tx.user.findUnique({where:{id:user.id}});
 
       await tx.pointMovement.create({
         data: {
@@ -670,7 +668,7 @@ const createProductSchema = z.object({
   brand: z.string().trim().min(1).max(100),
   description: z.string().trim().min(3).max(1000),
   price: z.coerce.number().int().min(0),
-  imageUrl: z.string().trim().min(1).max(500),
+  imageUrl: z.string().trim().min(1).max(500).refine(safeImage, "Usá una imagen local o HTTPS."),
   stock: z
     .union([z.coerce.number().int().min(0), z.null()])
     .optional()
@@ -734,7 +732,7 @@ const updateProductSchema = z.object({
   brand: z.string().trim().min(1).max(100).optional(),
   description: z.string().trim().min(3).max(1000).optional(),
   price: z.coerce.number().int().min(0).optional(),
-  imageUrl: z.string().trim().min(1).max(500).optional(),
+  imageUrl: z.string().trim().min(1).max(500).refine(safeImage, "Usá una imagen local o HTTPS.").optional(),
   stock: z
     .union([z.coerce.number().int().min(0), z.null()])
     .optional(),
@@ -864,11 +862,7 @@ router.delete("/products/:id", async (req, res, next) => {
       });
     }
 
-    await prisma.product.delete({
-      where: {
-        id: req.params.id,
-      },
-    });
+    await prisma.product.update({where:{id:req.params.id},data:{active:false,available:false}});
 
     res.json({
       ok: true,

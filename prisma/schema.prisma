@@ -40,6 +40,8 @@ model User {
   name                 String
   email                String          @unique
   phone                String
+  active               Boolean         @default(true)
+  sessionVersion       Int             @default(1)
   passwordHash         String
   role                 UserRole        @default(CUSTOMER)
   purchasePoints       Int             @default(0)
@@ -50,6 +52,8 @@ model User {
   referredUsers        User[]          @relation("UserReferrals")
   referralCodes        ReferralCode[]  @relation("CodeOwner")
   redeemedReferralCode ReferralCode?   @relation("CodeRedeemer")
+  appointments         Appointment[]
+  shopOrders           ShopOrder[]
   pointMovements       PointMovement[]
   createdAt            DateTime        @default(now())
   updatedAt            DateTime        @updatedAt
@@ -62,6 +66,7 @@ model StaffAccount {
   name           String
   email          String          @unique
   passwordHash   String
+  sessionVersion Int             @default(1)
   active         Boolean         @default(true)
   pointMovements PointMovement[]
   createdAt      DateTime        @default(now())
@@ -187,4 +192,63 @@ model SalonService {
 
   @@index([categoryId, active, sortOrder])
   @@index([mode, active])
+}
+
+model RateBucket {
+  key String @id
+  count Int @default(1)
+  expiresAt DateTime
+  @@index([expiresAt])
+}
+
+model AgendaConfig {
+  id Int @id @default(1)
+  weekly Json @default("[]")
+  overrides Json @default("[]")
+  holdHours Int @default(24)
+  noticeMinutes Int @default(120)
+  updatedAt DateTime @updatedAt
+}
+
+model Appointment {
+  id String @id @default(uuid())
+  customerId String?
+  customer User? @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  customerName String
+  phone String
+  startAt DateTime
+  endAt DateTime
+  status String @default("PENDING")
+  expiresAt DateTime?
+  services Json
+  notes String @default("")
+  requestKey String @unique
+  requestDigest String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([startAt, endAt])
+  @@index([customerId, startAt])
+}
+
+model ShopOrder {
+  id String @id @default(uuid())
+  customerId String
+  customer User @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  items Json
+  total Int
+  status String @default("PENDING")
+  requestKey String @unique
+  requestDigest String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([customerId, createdAt])
+}
+
+model AuditEvent {
+  id String @id @default(uuid())
+  actorId String
+  action String
+  targetId String?
+  createdAt DateTime @default(now())
+  @@index([createdAt])
 }
